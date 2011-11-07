@@ -23,6 +23,19 @@ module ActiveMerchant #:nodoc:
 				super
 			end  
       
+      # This was added in order to verify new cards BEFORE their use
+      # NOTE: It WILL incur a change each time it's used.
+			def verify(creditcard_or_card_id, options = {})
+				post = {}
+				add_invoice(post, options)
+				add_payment_source(post, creditcard_or_card_id, options)
+				add_address(post, options)
+        # Normally one would submit a dollar amount similar to the authorize
+        # transaction, but MES throws a 202 error when anything other
+        # than $0.00 is posted here
+				commit('A', 0, post)
+			end
+
 			def authorize(money, creditcard_or_card_id, options = {})
 				post = {}
 				add_invoice(post, options)

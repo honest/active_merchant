@@ -32,8 +32,10 @@ module ActiveMerchant #:nodoc:
 				add_address(post, options)
         # Normally one would submit a dollar amount similar to the authorize
         # transaction, but MES throws a 202 error when anything other
-        # than $0.00 is posted here
-				commit('A', 0, post)
+        # than $0.00 is posted here.  Also make sure to send the verify
+        # flag to the commit method so it knows how to interpret the gatewat
+        # response.
+				commit('A', 0, post, true)
 			end
 
 			def authorize(money, creditcard_or_card_id, options = {})
@@ -124,14 +126,27 @@ module ActiveMerchant #:nodoc:
 				results
 			end        
       
-			def commit(action, money, parameters)
+      # In the standard commit, the error code that comes back
+      # for monetary transactions will be "000" for success and 
+      # other values for failure.  BUT for a verification 
+      # (which is nonmonetary) success will be marked by an
+      # error code "085".  Since THIS version of MerchantESolutions
+      # was expanded to include verification transactions, then
+      # a check for this needs to happen.  Start by taking an optional
+      # parameter that flags if this is a verification transaction
+			def commit(action, money, parameters, verify = false)
 	  
 				url = test? ? TEST_URL : LIVE_URL
 				parameters[:transaction_amount]  = amount(money) if money unless action == 'V'
 		
 				response = parse( ssl_post(url, post_data(action,parameters)) )
 
-				Response.new(response["error_code"] == "000", message_from(response), response, 
+        # Key off the verify flag passed in to the commit method.  If 
+        # it is the verify method initiating the commit, then look
+        # for the '085' error code to denote success.  All other
+        # transactions look for '000' for success.
+				Response.new(verify ? (response["error_code"] == "085") : (response["error_code"] == "000"),
+          message_from(response), response, 
 					:authorization => response["transaction_id"],
 					:test => test?,
 					:cvv_result => response["cvv2_result"],

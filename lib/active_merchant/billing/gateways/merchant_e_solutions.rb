@@ -44,6 +44,7 @@ module ActiveMerchant #:nodoc:
 				add_invoice(post, options)
 				add_payment_source(post, creditcard_or_card_id, options)
 				add_address(post, options)
+        add_moto_ecommerce_ind(post, options)   # This provides the 'Mail Order/Telephone Order' type on the transaction
 				commit('P', money, post)
 			end
 
@@ -54,6 +55,7 @@ module ActiveMerchant #:nodoc:
 				add_invoice(post, options)
 				add_payment_source(post, creditcard_or_card_id, options)
 				add_address(post, options)
+        add_moto_ecommerce_ind(post, options)   # This provides the 'Mail Order/Telephone Order' type on the transaction
 				commit('D', money, post)
 			end
 
@@ -119,6 +121,33 @@ module ActiveMerchant #:nodoc:
 				end
 			end
 
+      # In the MES gateway there is a concept of 'Mail Order/Telephone
+      # Order' transaction type which differentiates different kinds of
+      # transactions and can affect the approval rate AND the
+      # transaction cost to the merchant.  Directly from the MES API
+      # documentation the codes are as follows:
+      #
+      # Z = Not a Mail/Telephone Order Transaction.
+      # 1 = One Time Mail/Telephone Order Transaction.
+      # 2 = Recurring Mail/Telephone Order Transaction.
+      # 3 = Installment Payment of a Mail/Telephone Order Transaction.
+      # 5 = Secure Electronic Commerce Transaction (3D Authenticated)
+      # 6 = Non-Authenticated Security Transaction at a 3-D Secure- capable merchant, and
+      #     merchant attempted to authenticate the cardholder using 3-D secure
+      # 7 = e-Commerce Transaction.
+      #
+      # Through their API MES will default to moto ecommerce type 7
+      # if no moto_ecommerce_ind is specified (naturally since it
+      # is going through the web api).
+      def add_moto_ecommerce_ind(post, options)
+        if options[:moto_ecommerce_ind].present?
+          post[:moto_ecommerce_ind] = options[:moto_ecommerce_ind].to_s
+        end
+      end
+
+      # This method will remain the same and be able to take either
+      # a string card id token (from the MES card store feature), or
+      # and instance of the ActiveMerchant::Billing:CreditCard
 			def add_payment_source(post, creditcard_or_card_id, options)
 				if creditcard_or_card_id.is_a?(String)
 					# using stored card

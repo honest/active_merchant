@@ -111,8 +111,21 @@ module ActiveMerchant #:nodoc:
 				end
 			end
       
+      # This method was modified to take an ActiveMerchant::Billing::CreditCard
+      # instance which can contain EITHER a credit card number OR a card id
+      # token (provided from the card store feature of MES).  MES recommends 
+      # that for live transactions, the address AND expiration dates also
+      # be submitted ALONG with the card id token since they ONLY store the
+      # card number (and not other data required by banks to clear the transaction).
 			def add_creditcard(post, creditcard, options)  
-				post[:card_number]  = creditcard.number
+        if creditcard.number.present?
+          # If there is a card number, use it.
+          post[:card_number]  = creditcard.number
+        elsif creditcard.card_id.present?
+          # If there is a card id, use that instead
+          post[:card_id] = creditcard.card_id         
+        end
+
 				post[:cvv2] = creditcard.verification_value if creditcard.verification_value?
 				post[:card_exp_date]  = expdate(creditcard)
 			end

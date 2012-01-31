@@ -112,6 +112,16 @@ module ActiveMerchant #:nodoc:
       # @return [String] the verification value
       attr_accessor :verification_value
 
+      # Because MES ONLY stores card numbers when implementing their
+      # card store feature, additional data such as expiration date,
+      # name, and address are required to clear most transactions with
+      # a stored credit card.  Because of that, the easiest way to 
+      # package a card id token from MES along with that additional data 
+      # for submission to the MES gateway is to package it along with 
+      # the ActiveMerchant::Billing::CreditCard.  Therefore, create an
+      # attribute accessor to hold the card id token
+      attr_accessor :card_id
+
       alias_method :brand, :type
 
       # Provides proxy access to an expiry date object

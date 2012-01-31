@@ -1,6 +1,6 @@
 require 'time'
 require 'date'
-require "active_merchant/billing/model"
+require 'active_merchant/billing/expiry_date'
 
 module ActiveMerchant #:nodoc:
   module Billing #:nodoc:
@@ -22,12 +22,12 @@ module ActiveMerchant #:nodoc:
     # * Forbrugsforeningen
     # * Laser
     #
-    # For testing purposes, use the 'bogus' credit card brand. This skips the vast majority of
+    # For testing purposes, use the 'bogus' credit card type. This skips the vast majority of
     # validations, allowing you to focus on your core concerns until you're ready to be more concerned
     # with the details of particular credit cards or your gateway.
     #
     # == Testing With CreditCard
-    # Often when testing we don't care about the particulars of a given card brand. When using the 'test'
+    # Often when testing we don't care about the particulars of a given card type. When using the 'test'
     # mode in your {Gateway}, there are six different valid card numbers: 1, 2, 3, 'success', 'fail',
     # and 'error'.
     #
@@ -39,15 +39,16 @@ module ActiveMerchant #:nodoc:
     #     :last_name  => 'Smith',
     #     :month      => '9',
     #     :year       => '2010',
-    #     :brand      => 'visa',
+    #     :type       => 'visa',
     #     :number     => '4242424242424242'
     #   )
     #
-    #   cc.validate # => {}
+    #   cc.valid? # => true
     #   cc.display_number # => XXXX-XXXX-XXXX-4242
     #
-    class CreditCard < Model
+    class CreditCard
       include CreditCardMethods
+      include Validateable
 
       cattr_accessor :require_verification_value
       self.require_verification_value = true
@@ -55,23 +56,19 @@ module ActiveMerchant #:nodoc:
       # Returns or sets the credit card number.
       #
       # @return [String]
-      attr_reader :number
-
-      def number=(value)
-        @number = (empty?(value) ? value : value.to_s.gsub(/[^\d]/, ""))
-      end
+      attr_accessor :number
 
       # Returns or sets the expiry month for the card.
       #
       # @return [Integer]
-      attr_reader :month
+      attr_accessor :month
 
       # Returns or sets the expiry year for the card.
       #
       # @return [Integer]
-      attr_reader :year
+      attr_accessor :year
 
-      # Returns or sets the credit card brand.
+      # Returns or sets the credit card type.
       #
       # Valid card types are
       #
@@ -90,19 +87,8 @@ module ActiveMerchant #:nodoc:
       #
       # Or, if you wish to test your implementation, +'bogus'+.
       #
-      # @return (String) the credit card brand
-      def brand
-        if !defined?(@brand) || empty?(@brand)
-          self.class.brand?(number)
-        else
-          @brand
-        end
-      end
-
-      def brand=(value)
-        value = value && value.to_s.dup
-        @brand = (value.respond_to?(:downcase) ? value.downcase : value)
-      end
+      # @return (String) the credit card type
+      attr_accessor :type
 
       # Returns or sets the first name of the card holder.
       #
@@ -115,8 +101,7 @@ module ActiveMerchant #:nodoc:
       attr_accessor :last_name
 
       # Required for Switch / Solo cards
-      attr_reader :start_month, :start_year
-      attr_accessor :issue_number
+      attr_accessor :start_month, :start_year, :issue_number
 
       # Returns or sets the card verification value.
       #
@@ -127,20 +112,15 @@ module ActiveMerchant #:nodoc:
       # @return [String] the verification value
       attr_accessor :verification_value
 
-      # Returns or sets the track data for the card
-      #
-      # @return [String]
-      attr_accessor :track_data
-
-      def type
-        ActiveMerchant.deprecated "CreditCard#type is deprecated and will be removed from a future release of ActiveMerchant. Please use CreditCard#brand instead."
-        brand
-      end
-
-      def type=(value)
-        ActiveMerchant.deprecated "CreditCard#type is deprecated and will be removed from a future release of ActiveMerchant. Please use CreditCard#brand instead."
-        self.brand = value
-      end
+      # Because MES ONLY stores card numbers when implementing their
+      # card store feature, additional data such as expiration date,
+      # name, and address are required to clear most transactions with
+      # a stored credit card.  Because of that, the easiest way to
+      # package a card id token from MES along with that additional data
+      # for submission to the MES gateway is to package it along with
+      # the ActiveMerchant::Billing::CreditCard.  Therefore, create an
+      # attribute accessor to hold the card id token
+      attr_accessor :card_id
 
       # Provides proxy access to an expiry date object
       #
@@ -163,19 +143,19 @@ module ActiveMerchant #:nodoc:
 
       # Returns whether the +first_name+ attribute has been set.
       def first_name?
-        first_name.present?
+        @first_name.present?
       end
 
       # Returns whether the +last_name+ attribute has been set.
       def last_name?
-        last_name.present?
+        @last_name.present?
       end
 
       # Returns the full name of the card holder.
       #
       # @return [String] the full name of the card holder
       def name
-        [first_name, last_name].compact.join(' ')
+        [@first_name, @last_name].compact.join(' ')
       end
 
       def name=(full_name)
@@ -184,21 +164,8 @@ module ActiveMerchant #:nodoc:
         self.first_name = names.join(" ")
       end
 
-      %w(month year start_month start_year).each do |m|
-        class_eval %(
-          def #{m}=(v)
-            @#{m} = case v
-            when "", nil, 0
-              nil
-            else
-              v.to_i
-            end
-          end
-        )
-      end
-
       def verification_value?
-        !verification_value.blank?
+        !@verification_value.blank?
       end
 
       # Returns a display-friendly version of the card number.
@@ -215,10 +182,6 @@ module ActiveMerchant #:nodoc:
         self.class.mask(number)
       end
 
-      def first_digits
-        self.class.first_digits(number)
-      end
-
       def last_digits
         self.class.last_digits(number)
       end
@@ -227,16 +190,15 @@ module ActiveMerchant #:nodoc:
       #
       # Any validation errors are added to the {#errors} attribute.
       def validate
-        errors = validate_essential_attributes + validate_verification_value
+        validate_essential_attributes
 
         # Bogus card is pretty much for testing purposes. Lets just skip these extra tests if its used
-        return errors_hash(errors) if brand == 'bogus'
+        return if type == 'bogus'
 
-        errors_hash(
-          errors +
-          validate_card_brand_and_number +
-          validate_switch_or_solo_attributes
-        )
+        validate_card_type
+        validate_card_number
+        validate_verification_value
+        validate_switch_or_solo_attributes
       end
 
       def self.requires_verification_value?
@@ -245,106 +207,60 @@ module ActiveMerchant #:nodoc:
 
       private
 
-      def validate_essential_attributes #:nodoc:
-        errors = []
-
-        errors << [:first_name, "cannot be empty"] if first_name.blank?
-        errors << [:last_name,  "cannot be empty"] if last_name.blank?
-
-        if(empty?(month) || empty?(year))
-          errors << [:month, "is required"] if empty?(month)
-          errors << [:year,  "is required"] if empty?(year)
-        else
-          errors << [:month, "is not a valid month"] if !valid_month?(month)
-
-          if expired?
-            errors << [:year,  "expired"]
-          else
-            errors << [:year,  "is not a valid year"]  if !valid_expiry_year?(year)
-          end
-        end
-
-        errors
+      def before_validate #:nodoc:
+        self.month = month.to_i
+        self.year  = year.to_i
+        self.start_month = start_month.to_i unless start_month.nil?
+        self.start_year = start_year.to_i unless start_year.nil?
+        self.number = number.to_s.gsub(/[^\d]/, "")
+        self.type.downcase! if type.respond_to?(:downcase)
+        self.type = self.class.type?(number) if type.blank?
       end
 
-      def validate_card_brand_and_number #:nodoc:
-        errors = []
-
-        if !empty?(brand)
-          errors << [:brand, "is invalid"]  if !CreditCard.card_companies.keys.include?(brand)
-        end
-
-        if empty?(number)
-          errors << [:number, "is required"]
+      def validate_card_number #:nodoc:
+        if number.blank?
+          errors.add :number, "is required"
         elsif !CreditCard.valid_number?(number)
-          errors << [:number, "is not a valid credit card number"]
+          errors.add :number, "is not a valid credit card number"
         end
 
-        if errors.empty?
-          errors << [:brand, "does not match the card number"] if !CreditCard.matching_brand?(number, brand)
+        unless errors.on(:number) || errors.on(:type)
+          errors.add :type, "is not the correct card type" unless CreditCard.matching_type?(number, type)
         end
-
-        errors
       end
 
-      def validate_verification_value #:nodoc:
-        errors = []
+      def validate_card_type #:nodoc:
+        errors.add :type, "is required" if type.blank? && number.present?
+        errors.add :type, "is invalid"  unless type.blank? || CreditCard.card_companies.keys.include?(type)
+      end
 
-        if verification_value?
-          unless valid_card_verification_value?(verification_value, brand)
-            errors << [:verification_value, "should be #{card_verification_value_length(brand)} digits"]
-          end
-        elsif CreditCard.requires_verification_value?
-          errors << [:verification_value, "is required"]
+      def validate_essential_attributes #:nodoc:
+        errors.add :first_name, "cannot be empty"      if @first_name.blank?
+        errors.add :last_name,  "cannot be empty"      if @last_name.blank?
+
+        if @month.to_i.zero? || @year.to_i.zero?
+          errors.add :month, "is required"  if @month.to_i.zero?
+          errors.add :year,  "is required"  if @year.to_i.zero?
+        else
+          errors.add :month,      "is not a valid month" unless valid_month?(@month)
+          errors.add :year,       "expired"              if expired?
+          errors.add :year,       "is not a valid year"  unless expired? || valid_expiry_year?(@year)
         end
-        errors
       end
 
       def validate_switch_or_solo_attributes #:nodoc:
-        errors = []
-
-        if %w[switch solo].include?(brand)
-          valid_start_month = valid_month?(start_month)
-          valid_start_year = valid_start_year?(start_year)
-
-          if((!valid_start_month || !valid_start_year) && !valid_issue_number?(issue_number))
-            if empty?(issue_number)
-              errors << [:issue_number, "cannot be empty"]
-              errors << [:start_month, "is invalid"] if !valid_start_month
-              errors << [:start_year,  "is invalid"] if !valid_start_year
-            else
-              errors << [:issue_number, "is invalid"] if !valid_issue_number?(issue_number)
-            end
+        if %w[switch solo].include?(type)
+          unless valid_month?(@start_month) && valid_start_year?(@start_year) || valid_issue_number?(@issue_number)
+            errors.add :start_month,  "is invalid"      unless valid_month?(@start_month)
+            errors.add :start_year,   "is invalid"      unless valid_start_year?(@start_year)
+            errors.add :issue_number, "cannot be empty" unless valid_issue_number?(@issue_number)
           end
         end
-
-        errors
       end
 
-      class ExpiryDate #:nodoc:
-        attr_reader :month, :year
-        def initialize(month, year)
-          @month = month.to_i
-          @year = year.to_i
-        end
-
-        def expired? #:nodoc:
-          Time.now.utc > expiration
-        end
-
-        def expiration #:nodoc:
-          begin
-            Time.utc(year, month, month_days, 23, 59, 59)
-          rescue ArgumentError
-            Time.at(0).utc
-          end
-        end
-
-        private
-        def month_days
-          mdays = [nil,31,28,31,30,31,30,31,31,30,31,30,31]
-          mdays[2] = 29 if Date.leap?(year)
-          mdays[month]
+      def validate_verification_value #:nodoc:
+        if CreditCard.requires_verification_value?
+          errors.add :verification_value, "is required" unless verification_value?
         end
       end
     end

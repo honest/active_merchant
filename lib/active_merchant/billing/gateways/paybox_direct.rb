@@ -1,5 +1,3 @@
-require 'iconv'
-
 module ActiveMerchant #:nodoc:
   module Billing #:nodoc:
     class PayboxDirectGateway < Gateway
@@ -132,7 +130,8 @@ module ActiveMerchant #:nodoc:
       end
 
       def parse(body)
-        body = Iconv.iconv("UTF-8","LATIN1", body.to_s).join
+        body = body.to_s.encode('UTF-8', 'LATIN1', :invalid => :replace, :undef => :replace, :replace => '?').join
+
         results = {}
         body.split(/&/).each do |pair|
           key,val = pair.split(/\=/)
